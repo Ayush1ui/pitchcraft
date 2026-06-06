@@ -20,13 +20,6 @@ In a terminal opened inside this folder:
 
 Then open http://127.0.0.1:5000 in your browser. Stop the server with Ctrl+C.
 
-## Optional: turn on AI copy
-Create a file named .env next to app.py containing a key from https://console.anthropic.com:
-
-    ANTHROPIC_API_KEY=sk-ant-...
-
-Restart the app. Nothing else changes.
-
 ## Posting for real (the safe, legal path)
 This tool drafts copy. To publish, use the official APIs on accounts you own:
 Meta Graph API for Instagram/Facebook, LinkedIn Share API for LinkedIn. It does
