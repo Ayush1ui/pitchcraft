@@ -1,21 +1,4 @@
-r"""
-Pitchcraft — a complete AI marketing tool in ONE file.
 
-HOW TO RUN (no editing needed):
-    python -m venv venv
-    # Windows: venv\Scripts\activate   |   Mac/Linux: source venv/bin/activate
-    pip install flask anthropic python-dotenv
-    python app.py
-Then open http://127.0.0.1:5000
-
-Works with NO API key (uses a built-in generator). If you ever want AI-written
-copy, create a file named ".env" next to this one containing:
-    ANTHROPIC_API_KEY=sk-ant-your-key
-...and restart. Nothing else changes.
-
-This drafts copy for YOUR OWN accounts. Publish via the official platform APIs.
-It does not create fake accounts or auto-comment on others' posts.
-"""
 
 import os
 import re
