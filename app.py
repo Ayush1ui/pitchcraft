@@ -164,7 +164,7 @@ textarea{resize:vertical}
 .carousel{display:flex;gap:12px;overflow-x:auto;margin-top:16px;padding-bottom:8px}
 .carousel:empty{display:none;margin:0}
 .slide{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;align-items:center}
-.slide img{width:140px;height:140px;border:1.5px solid var(--line);border-radius:3px;display:block}
+.slide img{width:140px;height:auto;max-height:250px;border:1.5px solid var(--line);border-radius:3px;display:block}
 .slide-dl{font-family:inherit;font-size:11px;text-transform:uppercase;letter-spacing:.05em;background:none;border:1px solid var(--ink);border-radius:2px;padding:3px 9px;cursor:pointer}
 .slide-dl:hover{background:var(--ink);color:var(--card)}
 .caption{white-space:pre-wrap;margin-bottom:14px}
@@ -189,6 +189,10 @@ textarea{resize:vertical}
 <div class="field"><label for="tone">Tone</label><select id="tone">
 <option value="friendly">Friendly</option><option value="bold">Bold</option><option value="playful">Playful</option>
 <option value="professional">Professional</option><option value="luxurious">Luxurious</option></select></div></div>
+<div class="field"><label for="imgsize">Image size (for Image &amp; Carousel)</label><select id="imgsize">
+<option value="square">Square &mdash; 1080&times;1080 (feed)</option>
+<option value="portrait">Portrait &mdash; 1080&times;1350 (feed, taller)</option>
+<option value="story">Story / Reel &mdash; 1080&times;1920 (vertical)</option></select></div>
 <button id="generate" class="generate-btn"><span class="btn-label">Generate copy</span><span class="btn-spinner"></span></button>
 <p id="status" class="status"></p></section>
 <section class="panel results-panel">
@@ -244,67 +248,73 @@ function setLoading(b){btn.disabled=b;btn.classList.toggle("loading",b);
  btn.querySelector(".btn-label").textContent=b?"Generating…":"Generate copy";}
 function setStatus(m,e=false){status.textContent=m;status.classList.toggle("error",e);}
 function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML;}
-function wrap(ctx,text,x,y,maxW,lh){
- const words=(text||"").split(" ");let line="",yy=y;
- for(const w of words){const t=line?line+" "+w:w;
-  if(ctx.measureText(t).width>maxW&&line){ctx.fillText(line,x,yy);line=w;yy+=lh;}else{line=t;}}
- if(line)ctx.fillText(line,x,yy);return yy;
+function imgSize(){
+ const v=(document.getElementById("imgsize")||{}).value||"square";
+ if(v==="portrait")return{w:1080,h:1350,tag:"portrait"};
+ if(v==="story")return{w:1080,h:1920,tag:"story"};
+ return{w:1080,h:1080,tag:"square"};
 }
+function wrapLines(ctx,text,maxW){
+ const words=(text||"").split(" ");const out=[];let line="";
+ for(const w of words){const t=line?line+" "+w:w;
+  if(ctx.measureText(t).width>maxW&&line){out.push(line);line=w;}else line=t;}
+ if(line)out.push(line);return out;
+}
+function renderCard(o){
+ const W=o.W,H=o.H,M=80,maxW=W-M*2;
+ const c=document.createElement("canvas");c.width=W;c.height=H;
+ const x=c.getContext("2d");x.textBaseline="alphabetic";
+ x.fillStyle=o.bg;x.fillRect(0,0,W,H);
+ x.fillStyle=o.accent;x.fillRect(M,148,84,8);
+ x.fillStyle=o.muted;x.font='600 30px "Spline Sans",sans-serif';
+ x.fillText((o.kicker||"").toUpperCase(),M,120);
+ const titleFont='900 80px "Fraunces",serif',titleLH=92;
+ const bodyFont=o.bodyItalic?'italic 500 50px "Fraunces",serif':'400 44px "Spline Sans",sans-serif';
+ const bodyLH=62,gap=44;
+ x.font=titleFont;const tl=wrapLines(x,o.title||"",maxW);
+ let bl=[];if(o.body){x.font=bodyFont;bl=wrapLines(x,o.body,maxW);}
+ const blockH=tl.length*titleLH+(bl.length?gap+bl.length*bodyLH:0);
+ const top=210,bottom=H-150,area=bottom-top;
+ let y=top+Math.max(0,(area-blockH)/2)+70;
+ x.fillStyle=o.fg;x.font=titleFont;
+ for(const ln of tl){x.fillText(ln,M,y);y+=titleLH;}
+ if(bl.length){y+=gap;x.fillStyle=o.bodyColor||o.fg;x.font=bodyFont;
+  for(const ln of bl){x.fillText(ln,M,y);y+=bodyLH;}}
+ x.fillStyle=o.muted;x.font='500 30px "Spline Sans",sans-serif';
+ x.fillText(o.footer||"PITCHCRAFT",M,H-90);
+ return c;
+}
+function fname(product,suffix){return ((product||"post").replace(/\s+/g,"-").toLowerCase())+"-"+suffix+".png";}
 async function downloadImage(post,product){
  try{await document.fonts.ready;}catch(e){}
- const S=1080,c=document.createElement("canvas");c.width=S;c.height=S;
- const ctx=c.getContext("2d");
- ctx.fillStyle="#f4ece0";ctx.fillRect(0,0,S,S);
- ctx.fillStyle="#e8542a";ctx.fillRect(0,0,S,26);ctx.fillRect(0,S-26,S,26);
- ctx.textBaseline="alphabetic";
- ctx.fillStyle="#8a7d6e";ctx.font='500 30px "Spline Sans",sans-serif';
- ctx.fillText("PITCHCRAFT",80,120);
- ctx.fillStyle="#1b1714";ctx.font='900 92px "Fraunces",serif';
- wrap(ctx,product||"Your product",80,300,S-160,98);
+ const s=imgSize();
  const hook=(post.caption||"").split("\n")[0];
- ctx.fillStyle="#e8542a";ctx.font='italic 500 50px "Fraunces",serif';
- wrap(ctx,hook,80,600,S-160,64);
- ctx.fillStyle="#8a7d6e";ctx.font='500 32px "Spline Sans",sans-serif';
- ctx.fillText((post.hashtags||[]).slice(0,4).join("   "),80,S-110);
- const a=document.createElement("a");
- a.download=((product||"post").replace(/\s+/g,"-").toLowerCase())+"-image.png";
+ const c=renderCard({W:s.w,H:s.h,bg:"#f4ece0",fg:"#1b1714",accent:"#e8542a",muted:"#8a7d6e",
+  kicker:"Featured",title:product||"Your product",body:hook,bodyItalic:true,bodyColor:"#e8542a",
+  footer:"PITCHCRAFT  \u2022  "+((post.hashtags||[]).slice(0,3).join("  "))});
+ const a=document.createElement("a");a.download=fname(product,s.tag);
  a.href=c.toDataURL("image/png");a.click();
-}
-function makeSlide(o){
- const S=1080,c=document.createElement("canvas");c.width=S;c.height=S;
- const x=c.getContext("2d");
- x.fillStyle=o.bg;x.fillRect(0,0,S,S);
- x.fillStyle=o.accent;x.fillRect(80,150,84,8);
- x.textBaseline="alphabetic";
- x.fillStyle=o.muted;x.font='600 30px "Spline Sans",sans-serif';
- x.fillText((o.kicker||"").toUpperCase(),80,120);
- x.fillStyle=o.fg;x.font='900 80px "Fraunces",serif';
- let y=wrap(x,o.title||"",80,300,S-160,90);
- if(o.body){x.fillStyle=o.bodyColor||o.fg;x.font='400 44px "Spline Sans",sans-serif';
-  wrap(x,o.body,80,y+90,S-160,60);}
- x.fillStyle=o.muted;x.font='500 30px "Spline Sans",sans-serif';
- x.fillText("PITCHCRAFT  \u2022  "+((o.n||1))+"/"+(o.total||4),80,S-90);
- return c;
 }
 async function buildCarousel(post,product,description,host){
  try{await document.fonts.ready;}catch(e){}
+ const s=imgSize();
  const hook=(post.caption||"").split("\n")[0];
  const body=(post.caption||"").split("\n").slice(1).join(" ").trim();
  const T=4;
- const slides=[
-  {bg:"#1b1714",fg:"#f4ece0",accent:"#e8542a",muted:"#a99e8e",kicker:"New",title:product||"Your product",body:hook,bodyColor:"#e8542a",n:1,total:T},
-  {bg:"#f4ece0",fg:"#1b1714",accent:"#e8542a",muted:"#8a7d6e",kicker:"What it is",title:description||hook,n:2,total:T},
-  {bg:"#e8542a",fg:"#fffaf2",accent:"#fffaf2",muted:"#ffd9c8",kicker:"Why you'll love it",title:body||hook,n:3,total:T},
-  {bg:"#1b1714",fg:"#f4ece0",accent:"#e8542a",muted:"#a99e8e",kicker:"Get yours",title:"Tap the link in bio",body:(post.hashtags||[]).slice(0,5).join("  "),bodyColor:"#e8542a",n:4,total:T}
+ const defs=[
+  {bg:"#1b1714",fg:"#f4ece0",accent:"#e8542a",muted:"#a99e8e",kicker:"New",title:product||"Your product",body:hook,bodyItalic:true,bodyColor:"#e8542a"},
+  {bg:"#f4ece0",fg:"#1b1714",accent:"#e8542a",muted:"#8a7d6e",kicker:"What it is",title:description||hook},
+  {bg:"#e8542a",fg:"#fffaf2",accent:"#fffaf2",muted:"#ffd9c8",kicker:"Why you'll love it",title:body||hook},
+  {bg:"#1b1714",fg:"#f4ece0",accent:"#e8542a",muted:"#a99e8e",kicker:"Get yours",title:"Tap the link in bio",body:(post.hashtags||[]).slice(0,5).join("  "),bodyColor:"#e8542a"}
  ];
- slides.forEach((s,i)=>{
-  const cv=makeSlide(s);
+ defs.forEach((d,i)=>{
+  d.W=s.w;d.H=s.h;d.footer="PITCHCRAFT  \u2022  "+(i+1)+"/"+T;
+  const cv=renderCard(d);
   const box=document.createElement("div");box.className="slide";
   const img=document.createElement("img");img.src=cv.toDataURL("image/png");
   const dl=document.createElement("button");dl.className="slide-dl";dl.textContent="Save "+(i+1);
   dl.addEventListener("click",()=>{const a=document.createElement("a");
-   a.download=((product||"post").replace(/\s+/g,"-").toLowerCase())+"-slide-"+(i+1)+".png";
-   a.href=cv.toDataURL("image/png");a.click();});
+   a.download=fname(product,s.tag+"-slide-"+(i+1));a.href=cv.toDataURL("image/png");a.click();});
   box.appendChild(img);box.appendChild(dl);host.appendChild(box);
  });
 }
@@ -332,4 +342,3 @@ def api_generate():
  
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
- 
