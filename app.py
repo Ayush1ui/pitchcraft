@@ -1,30 +1,34 @@
 import os
 import re
 import json
- 
+import html
+import base64
+import urllib.request
+import urllib.parse
+
 from flask import Flask, request, jsonify, render_template_string
- 
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass  # dotenv is optional
- 
+
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
 app = Flask(__name__)
- 
+
 PLATFORM_GUIDES = {
     "instagram": "Casual, visual, emoji-friendly. Hook then 1-3 short sentences. 8-12 hashtags.",
     "facebook":  "Conversational. Relatable hook, the benefit, a clear call to action. 1-3 hashtags.",
     "linkedin":  "Professional, value-led. Insight or problem, then how it helps. 3-5 niche hashtags.",
 }
- 
+
 STOPWORDS = set((
     "a an the and or but with for from of to in on at by is are be it this that "
     "your you our we they made make using uses use plus more most best new now "
     "get gets buy buys has have will can also so very really just like into out"
 ).split())
- 
+
 TONE = {
     "friendly":     ("Say hello to {p} \U0001F44B", "A friendly little upgrade your day's been missing."),
     "bold":         ("{p}. No compromises.", "Built for people who refuse to settle."),
@@ -40,16 +44,16 @@ IDEAS = {
 EXTRA_TAGS = {"instagram": ["#instagood", "#shopsmall", "#musthave"],
               "facebook": ["#smallbusiness"], "linkedin": ["#innovation", "#business"]}
 TAG_LIMIT = {"instagram": 10, "facebook": 3, "linkedin": 5}
- 
- 
+
+
 def _keywords(text, limit=6):
     out = []
     for w in re.findall(r"[A-Za-z]+", text.lower()):
         if len(w) > 2 and w not in STOPWORDS and w not in out:
             out.append(w)
     return out[:limit]
- 
- 
+
+
 def _hashtags(product, description, platform):
     tags = []
     brand = "".join(w.capitalize() for w in re.findall(r"[A-Za-z]+", product)[:3])
@@ -62,8 +66,8 @@ def _hashtags(product, description, platform):
         if len(t) > 1 and t.lower() not in [x.lower() for x in seen]:
             seen.append(t)
     return seen[: TAG_LIMIT.get(platform, 8)]
- 
- 
+
+
 def _caption(product, description, platform, tone):
     hook, closer = TONE.get(tone, TONE["friendly"])
     body = f"{hook.format(p=product)}\n\n{description.rstrip('. ').strip()}. {closer}"
@@ -72,34 +76,34 @@ def _caption(product, description, platform, tone):
     elif platform == "linkedin":
         body += "\n\nWe'd love to hear what you think."
     return body
- 
- 
+
+
 def template_generate(product, description, platform, tone):
     return {
         "caption": _caption(product, description, platform, tone),
         "hashtags": _hashtags(product, description, platform),
         "post_idea": IDEAS.get(platform, IDEAS["instagram"]).format(p=product),
     }
- 
- 
+
+
 def ai_generate(product, description, platform, tone, key):
     from anthropic import Anthropic
     client = Anthropic(api_key=key)
     prompt = f"""You are an expert marketing copywriter. Write a {tone} marketing post.
- 
+
 Product: {product}
 Description: {description}
 Platform: {platform}
 Platform style: {PLATFORM_GUIDES[platform]}
- 
+
 Respond ONLY with valid JSON (no markdown, no backticks) in this exact shape:
 {{"caption": "...", "hashtags": ["#a", "#b"], "post_idea": "..."}}"""
     resp = client.messages.create(model=MODEL, max_tokens=1000,
                                   messages=[{"role": "user", "content": prompt}])
     text = "".join(b.text for b in resp.content if b.type == "text")
     return json.loads(text)
- 
- 
+
+
 def generate_post(product, description, platform, tone):
     platform = platform.lower()
     if platform not in PLATFORM_GUIDES:
@@ -115,8 +119,71 @@ def generate_post(product, description, platform, tone):
     post = template_generate(product, description, platform, tone)
     post["engine"] = "Built-in"
     return post
- 
- 
+
+
+# ----- Fetch product details from a URL (title, description, image). -----
+# Uses only the standard library, so no extra install is needed.
+
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+
+def _meta_tags(page_html):
+    """Return a dict of <meta property/name> -> content."""
+    tags = {}
+    for tag in re.findall(r"<meta\s+[^>]+>", page_html, re.I):
+        key = re.search(r'(?:property|name)\s*=\s*["\']([^"\']+)["\']', tag, re.I)
+        val = re.search(r'content\s*=\s*["\']([^"\']*)["\']', tag, re.I)
+        if key and val:
+            tags.setdefault(key.group(1).lower(), html.unescape(val.group(1)).strip())
+    return tags
+
+
+def parse_product(page_html, base_url):
+    """Pull product name, description, and image URL out of page HTML."""
+    m = _meta_tags(page_html)
+    title = m.get("og:title") or m.get("twitter:title") or ""
+    if not title:
+        t = re.search(r"<title[^>]*>([^<]+)</title>", page_html, re.I)
+        title = html.unescape(t.group(1)).strip() if t else ""
+    desc = (m.get("og:description") or m.get("description")
+            or m.get("twitter:description") or "")
+    img = (m.get("og:image") or m.get("og:image:secure_url")
+           or m.get("twitter:image") or "")
+    if img:
+        img = urllib.parse.urljoin(base_url, img)
+    return {"product": title[:120], "description": desc[:400], "image_url": img}
+
+
+def _fetch_image_data(img_url):
+    """Download an image and return it as a base64 data URL (so the browser
+    can draw it onto a canvas without cross-origin problems)."""
+    try:
+        req = urllib.request.Request(img_url, headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            ctype = (resp.headers.get("Content-Type") or "").split(";")[0]
+            if "image" not in ctype:
+                return ""
+            data = resp.read(4_000_000)  # cap at ~4MB
+        return "data:%s;base64,%s" % (ctype, base64.b64encode(data).decode("ascii"))
+    except Exception:
+        return ""
+
+
+def fetch_product(url):
+    url = url.strip()
+    if not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    req = urllib.request.Request(url, headers={"User-Agent": _UA,
+                                               "Accept-Language": "en-US,en;q=0.9"})
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        raw = resp.read(800_000)  # cap at ~800KB of HTML
+    page_html = raw.decode("utf-8", "ignore")
+    info = parse_product(page_html, url)
+    info["image"] = _fetch_image_data(info.pop("image_url", "")) if info.get("image_url") else ""
+    return info
+
+
 PAGE = r"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -141,6 +208,13 @@ label{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--m
 input,textarea,select{font-family:inherit;font-size:16px;color:var(--ink);background:var(--paper);border:1.5px solid var(--line);border-radius:3px;padding:12px 14px;transition:border-color .15s,box-shadow .15s}
 input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 textarea{resize:vertical}
+.url-row{display:flex;gap:10px}
+.url-row input{flex:1}
+.fetch-btn{font-family:"Fraunces",serif;font-weight:600;font-size:15px;color:var(--card);background:var(--ink);border:none;border-radius:3px;padding:0 20px;cursor:pointer;transition:background .2s}
+.fetch-btn:hover{background:var(--accent)}.fetch-btn:disabled{opacity:.6;cursor:progress}
+.fetchstatus{font-size:13px;min-height:18px;margin-top:8px;color:var(--muted)}
+.fetchstatus.error{color:var(--accent)}.fetchstatus.ok{color:#3a7d3a}
+.thumb{margin-top:10px;max-height:120px;max-width:100%;border:1.5px solid var(--line);border-radius:3px}
 .generate-btn{margin-top:8px;width:100%;display:inline-flex;align-items:center;justify-content:center;gap:10px;font-family:"Fraunces",serif;font-weight:600;font-size:18px;color:var(--card);background:var(--ink);border:none;border-radius:3px;padding:15px;cursor:pointer;transition:transform .1s,background .2s}
 .generate-btn:hover{background:var(--accent)}.generate-btn:active{transform:translateY(2px)}.generate-btn:disabled{opacity:.6;cursor:progress}
 .btn-spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;display:none;animation:spin .7s linear infinite}
@@ -178,7 +252,12 @@ textarea{resize:vertical}
 <main class="layout">
 <section class="panel">
 <h1 class="headline">Turn a product into<br><em>posts that sell.</em></h1>
-<p class="sub">Describe what you're selling. Pick a platform and a vibe. Get caption, hashtags, and a visual idea — instantly.</p>
+<p class="sub">Paste a product link to auto-fill the details, or type them in. Pick a platform and a vibe. Get caption, hashtags, images — instantly.</p>
+<div class="field"><label for="url">Product URL (optional)</label>
+<div class="url-row"><input id="url" placeholder="https://yourstore.com/products/...">
+<button id="fetchbtn" class="fetch-btn">Fetch</button></div>
+<p id="fetchstatus" class="fetchstatus"></p>
+<img id="thumb" class="thumb" alt="product" style="display:none"></div>
 <div class="field"><label for="product">Product name</label><input id="product" placeholder="e.g. Bamboo Toothbrush"></div>
 <div class="field"><label for="description">What is it? (a sentence or two)</label>
 <textarea id="description" rows="3" placeholder="Eco-friendly toothbrush, biodegradable handle, soft bristles"></textarea></div>
@@ -202,6 +281,30 @@ textarea{resize:vertical}
 <script>
 const btn=document.getElementById("generate"),status=document.getElementById("status"),
 resultsEl=document.getElementById("results"),emptyEl=document.getElementById("empty");
+let productImg=null;
+const fetchBtn=document.getElementById("fetchbtn");
+fetchBtn.addEventListener("click",fetchUrl);
+async function fetchUrl(){
+ const url=document.getElementById("url").value.trim();
+ const fs=document.getElementById("fetchstatus"),thumb=document.getElementById("thumb");
+ if(!url){fs.textContent="Paste a product URL first.";fs.className="fetchstatus error";return;}
+ fs.textContent="Fetching the product details…";fs.className="fetchstatus";fetchBtn.disabled=true;
+ try{
+  const res=await fetch("/api/fetch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})});
+  const data=await res.json();
+  if(data.error){fs.textContent=data.error;fs.className="fetchstatus error";return;}
+  if(data.product)document.getElementById("product").value=data.product;
+  if(data.description)document.getElementById("description").value=data.description;
+  if(data.image){productImg=new Image();productImg.src=data.image;
+   thumb.src=data.image;thumb.style.display="block";
+   fs.textContent="Got the product name, description, and photo. Edit anything, then Generate.";}
+  else{productImg=null;thumb.style.display="none";
+   fs.textContent=(data.product||data.description)?"Got the details (no photo found). Edit anything, then Generate.":"Couldn't find product details on that page. Try filling them in manually.";}
+  fs.className="fetchstatus ok";
+ }catch(e){fs.textContent="Fetch failed: "+e.message;fs.className="fetchstatus error";}
+ finally{fetchBtn.disabled=false;}
+}
+function imgReady(im){return new Promise(r=>{if(!im||im.complete)return r();im.onload=()=>r();im.onerror=()=>r();});}
 btn.addEventListener("click",generate);
 async function generate(){
  const product=document.getElementById("product").value.trim(),
@@ -260,22 +363,31 @@ function wrapLines(ctx,text,maxW){
   if(ctx.measureText(t).width>maxW&&line){out.push(line);line=w;}else line=t;}
  if(line)out.push(line);return out;
 }
+function drawCover(x,img,dx,dy,dw,dh){
+ const iw=img.naturalWidth,ih=img.naturalHeight;if(!iw||!ih)return;
+ const s=Math.max(dw/iw,dh/ih),w=iw*s,h=ih*s,ox=dx+(dw-w)/2,oy=dy+(dh-h)/2;
+ x.save();x.beginPath();x.rect(dx,dy,dw,dh);x.clip();x.drawImage(img,ox,oy,w,h);x.restore();
+}
 function renderCard(o){
  const W=o.W,H=o.H,M=80,maxW=W-M*2;
  const c=document.createElement("canvas");c.width=W;c.height=H;
  const x=c.getContext("2d");x.textBaseline="alphabetic";
  x.fillStyle=o.bg;x.fillRect(0,0,W,H);
- x.fillStyle=o.accent;x.fillRect(M,148,84,8);
+ const hasImg=o.image&&o.image.complete&&o.image.naturalWidth>0;
+ let headY=120,ruleY=148,areaTop=210;
+ if(hasImg){const ih=Math.round(H*0.5);drawCover(x,o.image,0,0,W,ih);
+  headY=ih+74;ruleY=ih+94;areaTop=ih+132;}
  x.fillStyle=o.muted;x.font='600 30px "Spline Sans",sans-serif';
- x.fillText((o.kicker||"").toUpperCase(),M,120);
+ x.fillText((o.kicker||"").toUpperCase(),M,headY);
+ x.fillStyle=o.accent;x.fillRect(M,ruleY,84,8);
  const titleFont='900 80px "Fraunces",serif',titleLH=92;
  const bodyFont=o.bodyItalic?'italic 500 50px "Fraunces",serif':'400 44px "Spline Sans",sans-serif';
  const bodyLH=62,gap=44;
  x.font=titleFont;const tl=wrapLines(x,o.title||"",maxW);
  let bl=[];if(o.body){x.font=bodyFont;bl=wrapLines(x,o.body,maxW);}
  const blockH=tl.length*titleLH+(bl.length?gap+bl.length*bodyLH:0);
- const top=210,bottom=H-150,area=bottom-top;
- let y=top+Math.max(0,(area-blockH)/2)+70;
+ const areaBottom=H-150,area=areaBottom-areaTop;
+ let y=areaTop+Math.max(0,(area-blockH)/2)+70;
  x.fillStyle=o.fg;x.font=titleFont;
  for(const ln of tl){x.fillText(ln,M,y);y+=titleLH;}
  if(bl.length){y+=gap;x.fillStyle=o.bodyColor||o.fg;x.font=bodyFont;
@@ -287,22 +399,25 @@ function renderCard(o){
 function fname(product,suffix){return ((product||"post").replace(/\s+/g,"-").toLowerCase())+"-"+suffix+".png";}
 async function downloadImage(post,product){
  try{await document.fonts.ready;}catch(e){}
+ await imgReady(productImg);
  const s=imgSize();
  const hook=(post.caption||"").split("\n")[0];
  const c=renderCard({W:s.w,H:s.h,bg:"#f4ece0",fg:"#1b1714",accent:"#e8542a",muted:"#8a7d6e",
   kicker:"Featured",title:product||"Your product",body:hook,bodyItalic:true,bodyColor:"#e8542a",
+  image:productImg,
   footer:"PITCHCRAFT  \u2022  "+((post.hashtags||[]).slice(0,3).join("  "))});
  const a=document.createElement("a");a.download=fname(product,s.tag);
  a.href=c.toDataURL("image/png");a.click();
 }
 async function buildCarousel(post,product,description,host){
  try{await document.fonts.ready;}catch(e){}
+ await imgReady(productImg);
  const s=imgSize();
  const hook=(post.caption||"").split("\n")[0];
  const body=(post.caption||"").split("\n").slice(1).join(" ").trim();
  const T=4;
  const defs=[
-  {bg:"#1b1714",fg:"#f4ece0",accent:"#e8542a",muted:"#a99e8e",kicker:"New",title:product||"Your product",body:hook,bodyItalic:true,bodyColor:"#e8542a"},
+  {bg:"#1b1714",fg:"#f4ece0",accent:"#e8542a",muted:"#a99e8e",kicker:"New",title:product||"Your product",body:hook,bodyItalic:true,bodyColor:"#e8542a",image:productImg},
   {bg:"#f4ece0",fg:"#1b1714",accent:"#e8542a",muted:"#8a7d6e",kicker:"What it is",title:description||hook},
   {bg:"#e8542a",fg:"#fffaf2",accent:"#fffaf2",muted:"#ffd9c8",kicker:"Why you'll love it",title:body||hook},
   {bg:"#1b1714",fg:"#f4ece0",accent:"#e8542a",muted:"#a99e8e",kicker:"Get yours",title:"Tap the link in bio",body:(post.hashtags||[]).slice(0,5).join("  "),bodyColor:"#e8542a"}
@@ -319,13 +434,13 @@ async function buildCarousel(post,product,description,host){
  });
 }
 </script></body></html>"""
- 
- 
+
+
 @app.route("/")
 def home():
     return render_template_string(PAGE)
- 
- 
+
+
 @app.route("/api/generate", methods=["POST"])
 def api_generate():
     data = request.get_json(silent=True) or {}
@@ -338,7 +453,21 @@ def api_generate():
     platforms = list(PLATFORM_GUIDES) if platform == "all" else [platform]
     results = {p: generate_post(product, description, p, tone) for p in platforms}
     return jsonify({"results": results})
- 
- 
+
+
+@app.route("/api/fetch", methods=["POST"])
+def api_fetch():
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "Please paste a product URL."}), 400
+    try:
+        return jsonify(fetch_product(url))
+    except Exception as e:
+        return jsonify({"error": "Couldn't read that page — the site may block "
+                        "automated access (Amazon often does). Fill the fields in "
+                        "manually, or try a different product link."}), 200
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
