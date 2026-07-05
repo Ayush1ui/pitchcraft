@@ -225,6 +225,29 @@ def _find_field(data, field):
     return walk(data, True) or walk(data, False)
  
  
+def _amazon_image(page_html):
+    """Amazon hides the main product image in JS/data attributes, not og tags."""
+    # data-a-dynamic-image='{"https://...jpg":[w,h], ...}' -> pick largest
+    m = re.search(r'data-a-dynamic-image\s*=\s*["\'](\{.*?\})["\']', page_html, re.I | re.S)
+    if m:
+        try:
+            d = json.loads(html.unescape(m.group(1)))
+            if d:
+                best = max(d.items(), key=lambda kv: (kv[1][0] * kv[1][1])
+                           if isinstance(kv[1], list) and len(kv[1]) >= 2 else 0)
+                return best[0]
+        except Exception:
+            pass
+    for pat in (r'data-old-hires\s*=\s*["\'](https://[^"\']+)["\']',
+                r'"hiRes"\s*:\s*"(https://[^"]+?)"',
+                r'"large"\s*:\s*"(https://[^"]+?\.jpg)"',
+                r'id=["\']landingImage["\'][^>]*\ssrc=["\'](https://[^"\']+)["\']'):
+        m = re.search(pat, page_html, re.I)
+        if m:
+            return m.group(1).replace("\\/", "/")
+    return ""
+ 
+ 
 def parse_product(page_html, base_url):
     """Pull product name, description, and image URL out of page HTML,
     checking Open Graph tags, then embedded JSON-LD product data."""
@@ -245,6 +268,8 @@ def parse_product(page_html, base_url):
         if not img:
             img = _find_image_in_jsonld(data)
  
+    if not img:  # Amazon and some others hide the image in JS/data attributes
+        img = _amazon_image(page_html)
     if not title:  # last resort: the page <title>
         t = re.search(r"<title[^>]*>([^<]+)</title>", page_html, re.I)
         title = html.unescape(t.group(1)).strip() if t else ""
@@ -283,7 +308,12 @@ def fetch_product(url):
         raw = resp.read(2_500_000)  # cap at ~2.5MB of HTML
     page_html = raw.decode("utf-8", "ignore")
     info = parse_product(page_html, url)
-    info["image"] = _fetch_image_data(info.pop("image_url", "")) if info.get("image_url") else ""
+    img_url = info.pop("image_url", "")
+    info["image"] = _fetch_image_data(img_url) if img_url else ""
+    info["diag"] = {"via": "scraper" if SCRAPER_KEY else "direct",
+                    "kb": round(len(page_html) / 1024),
+                    "img_url_found": bool(img_url),
+                    "img_loaded": bool(info["image"])}
     return info
  
  
@@ -419,7 +449,8 @@ async function fetchUrl(){
    thumb.src=data.image;thumb.style.display="block";
    fs.textContent="Got the product name, description, and photo. Edit anything, then Generate.";}
   else{productImg=null;thumb.style.display="none";
-   fs.textContent=(data.product||data.description)?"Got the details (no photo found). Edit anything, then Generate.":"Couldn't find product details on that page. Try filling them in manually.";}
+   const dg=data.diag?(" [via "+data.diag.via+", "+data.diag.kb+"KB, image tag "+(data.diag.img_url_found?"found but failed to load":"not found")+"]"):"";
+   fs.textContent=((data.product||data.description)?"Got the details (no photo found).":"Couldn't find product details on that page.")+dg+" Tip: upload the photo, or try a brand's own store link.";}
   fs.className="fetchstatus ok";
  }catch(e){fs.textContent="Fetch failed: "+e.message;fs.className="fetchstatus error";}
  finally{fetchBtn.disabled=false;}
@@ -608,3 +639,4 @@ def api_fetch():
  
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+ 
