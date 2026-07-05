@@ -441,7 +441,14 @@ async function fetchUrl(){
  fs.textContent="Fetching the product details…";fs.className="fetchstatus";fetchBtn.disabled=true;
  try{
   const res=await fetch("/api/fetch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})});
-  const data=await res.json();
+  const raw=await res.text();
+  let data;
+  try{data=JSON.parse(raw);}catch(parseErr){
+   fs.textContent=(res.status>=500||!res.ok)
+    ?"The site took too long or blocked the request (server timeout). Try again in a moment, upload the photo, or try a brand's own store link."
+    :"Unexpected response from the server. Try again, or upload the photo.";
+   fs.className="fetchstatus error";return;
+  }
   if(data.error){fs.textContent=data.error;fs.className="fetchstatus error";return;}
   if(data.product)document.getElementById("product").value=data.product;
   if(data.description)document.getElementById("description").value=data.description;
@@ -639,4 +646,3 @@ def api_fetch():
  
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
- 
