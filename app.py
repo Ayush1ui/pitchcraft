@@ -1,3 +1,4 @@
+ 
 import os
 import re
 import json
@@ -21,6 +22,8 @@ PLATFORM_GUIDES = {
     "instagram": "Casual, visual, emoji-friendly. Hook then 1-3 short sentences. 8-12 hashtags.",
     "facebook":  "Conversational. Relatable hook, the benefit, a clear call to action. 1-3 hashtags.",
     "linkedin":  "Professional, value-led. Insight or problem, then how it helps. 3-5 niche hashtags.",
+    "x":         "Very short and punchy. One strong hook, ~240 characters max, 1-2 hashtags.",
+    "reddit":    "Authentic and non-promotional. A clear title and an honest, helpful body. No hashtags, no hype.",
 }
  
 STOPWORDS = set((
@@ -35,15 +38,21 @@ TONE = {
     "playful":      ("Okay, {p} is kind of a big deal \U0001F92D", "Don't say we didn't warn you."),
     "professional": ("Introducing {p}.", "Thoughtfully made to do exactly what you need."),
     "luxurious":    ("{p} \u2014 refined to the last detail.", "For those who appreciate the finer things."),
+    "creative":     ("Reimagine your day with {p}.", "Made for people who see things a little differently."),
+    "official":     ("Presenting {p}.", "Engineered to deliver, every single time."),
+    "classic":      ("{p} \u2014 timeless by design.", "Quality that never goes out of style."),
 }
 IDEAS = {
     "instagram": "A bright close-up of {p} in natural light against a clean, simple background.",
     "facebook":  "A short clip of {p} in everyday use, with on-screen text of the main benefit.",
     "linkedin":  "A clean product photo of {p} paired with a one-line customer quote or stat.",
+    "x":         "A crisp product shot or a 2-3 second looping clip that reads fast in the feed.",
+    "reddit":    "An honest, well-lit photo of {p} in real use \u2014 Reddit values authenticity over polish.",
 }
 EXTRA_TAGS = {"instagram": ["#instagood", "#shopsmall", "#musthave"],
-              "facebook": ["#smallbusiness"], "linkedin": ["#innovation", "#business"]}
-TAG_LIMIT = {"instagram": 10, "facebook": 3, "linkedin": 5}
+              "facebook": ["#smallbusiness"], "linkedin": ["#innovation", "#business"],
+              "x": [], "reddit": []}
+TAG_LIMIT = {"instagram": 10, "facebook": 3, "linkedin": 5, "x": 2, "reddit": 0}
  
  
 def _keywords(text, limit=6):
@@ -70,7 +79,14 @@ def _hashtags(product, description, platform):
  
 def _caption(product, description, platform, tone):
     hook, closer = TONE.get(tone, TONE["friendly"])
-    body = f"{hook.format(p=product)}\n\n{description.rstrip('. ').strip()}. {closer}"
+    hook = hook.format(p=product)
+    desc = description.rstrip(". ").strip()
+    if platform == "x":  # short and punchy for a fast feed
+        s = f"{hook} {desc}."
+        return (s[:236] + "\u2026") if len(s) > 238 else s
+    if platform == "reddit":  # authentic title + honest body, no hype/hashtags
+        return f"{product}\n\n{desc}."
+    body = f"{hook}\n\n{desc}. {closer}"
     if platform == "facebook":
         body += "\n\n\U0001F449 Tap to learn more."
     elif platform == "linkedin":
@@ -371,6 +387,12 @@ textarea{resize:vertical}
 .img-btn:hover{background:var(--accent);color:#fff}
 .car-btn{font-family:inherit;font-size:12px;letter-spacing:.06em;text-transform:uppercase;background:none;border:1.5px solid var(--ink);color:var(--ink);border-radius:2px;padding:6px 10px;margin-right:8px;cursor:pointer;transition:background .15s,color .15s}
 .car-btn:hover{background:var(--ink);color:var(--card)}
+.gif-btn{font-family:inherit;font-size:12px;letter-spacing:.06em;text-transform:uppercase;background:none;border:1.5px solid var(--muted);color:var(--muted);border-radius:2px;padding:6px 10px;margin-right:8px;cursor:pointer;transition:background .15s,color .15s}
+.gif-btn:hover{background:var(--muted);color:var(--card)}
+.gifbox{margin-top:16px}.gifbox:empty{display:none;margin:0}
+.gif-preview{max-width:230px;border:1.5px solid var(--line);border-radius:3px;display:block}
+.gif-dl{display:inline-block;margin-top:8px;text-decoration:none}
+.gif-note{font-size:13px;color:var(--muted)}.gif-note.error{color:var(--accent)}
 .carousel{display:flex;gap:12px;overflow-x:auto;margin-top:16px;padding-bottom:8px}
 .carousel:empty{display:none;margin:0}
 .slide{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;align-items:center}
@@ -383,6 +405,7 @@ textarea{resize:vertical}
 .idea{font-size:14px;color:var(--muted);border-top:1px dashed var(--line);padding-top:12px}.idea strong{color:var(--ink);font-weight:600}
 .footer{text-align:center;padding:0 6vw 40px;color:var(--muted);font-size:13px}
 </style></head><body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
 <header class="masthead"><div class="logo">Pitchcraft<span class="dot">.</span></div>
 <p class="kicker">AI marketing copy, built for your own channels</p></header>
 <main class="layout">
@@ -402,10 +425,12 @@ textarea{resize:vertical}
 <textarea id="description" rows="3" placeholder="Eco-friendly toothbrush, biodegradable handle, soft bristles"></textarea></div>
 <div class="field-row">
 <div class="field"><label for="platform">Platform</label><select id="platform">
-<option value="all">All three</option><option value="instagram">Instagram</option>
-<option value="facebook">Facebook</option><option value="linkedin">LinkedIn</option></select></div>
-<div class="field"><label for="tone">Tone</label><select id="tone">
+<option value="all">All five</option><option value="instagram">Instagram</option>
+<option value="facebook">Facebook</option><option value="linkedin">LinkedIn</option>
+<option value="x">X (Twitter)</option><option value="reddit">Reddit</option></select></div>
+<div class="field"><label for="tone">Tone / content idea</label><select id="tone">
 <option value="friendly">Friendly</option><option value="bold">Bold</option><option value="playful">Playful</option>
+<option value="creative">Creative</option><option value="official">Official</option><option value="classic">Classic (old style)</option>
 <option value="professional">Professional</option><option value="luxurious">Luxurious</option></select></div></div>
 <div class="field"><label for="imgsize">Image size (for Image &amp; Carousel)</label><select id="imgsize">
 <option value="square">Square &mdash; 1080&times;1080 (feed)</option>
@@ -486,11 +511,12 @@ function render(results){
   const fullText=post.caption+"\n\n"+(post.hashtags||[]).join(" ");
   card.innerHTML='<div class="card-head"><span class="platform-tag">'+esc(platform)+
    '</span><span class="engine-badge">'+esc(post.engine||"")+'</span>'+
-   '<button class="car-btn">Carousel</button><button class="img-btn">Image</button>'+
+   '<button class="car-btn">Carousel</button><button class="gif-btn">GIF</button>'+
+   '<button class="img-btn">Image</button>'+
    '<button class="copy-btn">Copy</button></div>'+
    '<p class="caption">'+esc(post.caption||"")+'</p><div class="hashtags">'+hashtags+
    '</div><p class="idea"><strong>Visual idea:</strong> '+esc(post.post_idea||"")+'</p>'+
-   '<div class="carousel"></div>';
+   '<div class="carousel"></div><div class="gifbox"></div>';
   const cb=card.querySelector(".copy-btn");
   cb.addEventListener("click",()=>{navigator.clipboard.writeText(fullText);
    cb.textContent="Copied!";cb.classList.add("copied");
@@ -501,6 +527,11 @@ function render(results){
    const host=card.querySelector(".carousel");
    if(host.children.length){host.innerHTML="";return;}
    buildCarousel(post,document.getElementById("product").value.trim(),
+    document.getElementById("description").value.trim(),host);});
+  card.querySelector(".gif-btn").addEventListener("click",()=>{
+   const host=card.querySelector(".gifbox");
+   if(host.children.length){host.innerHTML="";return;}
+   buildGif(post,document.getElementById("product").value.trim(),
     document.getElementById("description").value.trim(),host);});
   resultsEl.appendChild(card);
  });
@@ -574,7 +605,38 @@ async function downloadImage(post,product){
  const a=document.createElement("a");a.download=fname(product,s.tag);
  a.href=c.toDataURL("image/png");a.click();
 }
-async function buildCarousel(post,product,description,host){
+async function buildGif(post,product,description,host){
+ if(typeof GIF==="undefined"){
+  host.innerHTML='<p class="gif-note error">GIF tool didn\'t load \u2014 check your connection and try again.</p>';return;}
+ try{await document.fonts.ready;}catch(e){}
+ const imgs=activeImages();for(const im of imgs)await imgReady(im);
+ const s=imgSize();
+ const scale=Math.min(1,720/Math.max(s.w,s.h));
+ const W=Math.round(s.w*scale),H=Math.round(s.h*scale);
+ const hook=(post.caption||"").split("\n")[0];
+ const body=(post.caption||"").split("\n").slice(1).join(" ").trim();
+ const tags=(post.hashtags||[]).slice(0,5).join("  ");
+ const frames=[
+  {bg:"#1b1714",fg:"#f4ece0",accent:"#e8542a",muted:"#a99e8e",line:"#e0d4c2",kicker:"New",title:product||"Your product",body:imgs.length?"":hook,bodyItalic:true,bodyColor:"#e8542a",image:imgs[0]},
+  {bg:"#f4ece0",fg:"#1b1714",accent:"#e8542a",muted:"#8a7d6e",kicker:"Why you'll love it",title:body||hook},
+  {bg:"#e8542a",fg:"#fffaf2",accent:"#fffaf2",muted:"#ffd9c8",kicker:"Get yours",title:"Tap the link in bio",body:tags,bodyColor:"#fffaf2"}
+ ];
+ host.innerHTML='<p class="gif-note">Building your GIF\u2026 a few seconds.</p>';
+ let gif;
+ try{
+  gif=new GIF({workers:2,quality:10,width:W,height:H,
+   workerScript:"https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js"});
+ }catch(e){host.innerHTML='<p class="gif-note error">Couldn\'t start the GIF tool.</p>';return;}
+ frames.forEach(f=>{f.W=W;f.H=H;f.footer="PITCHCRAFT";gif.addFrame(renderCard(f),{delay:1400});});
+ gif.on("finished",function(blob){
+  const url=URL.createObjectURL(blob);host.innerHTML="";
+  const img=document.createElement("img");img.src=url;img.className="gif-preview";
+  const dl=document.createElement("a");dl.href=url;dl.download=fname(product,s.tag+"-animation.gif");
+  dl.textContent="Download GIF";dl.className="slide-dl gif-dl";
+  host.appendChild(img);host.appendChild(document.createElement("br"));host.appendChild(dl);
+ });
+ gif.render();
+}
  try{await document.fonts.ready;}catch(e){}
  const imgs=activeImages();for(const im of imgs)await imgReady(im);
  const s=imgSize();
