@@ -5,18 +5,18 @@ import html
 import base64
 import urllib.request
 import urllib.parse
- 
+
 from flask import Flask, request, jsonify, render_template_string
- 
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass  # dotenv is optional
- 
+
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
 app = Flask(__name__)
- 
+
 PLATFORM_GUIDES = {
     "instagram": "Casual, visual, emoji-friendly. Hook then 1-3 short sentences. 8-12 hashtags.",
     "facebook":  "Conversational. Relatable hook, the benefit, a clear call to action. 1-3 hashtags.",
@@ -24,13 +24,13 @@ PLATFORM_GUIDES = {
     "x":         "Very short and punchy. One strong hook, ~240 characters max, 1-2 hashtags.",
     "reddit":    "Authentic and non-promotional. A clear title and an honest, helpful body. No hashtags, no hype.",
 }
- 
+
 STOPWORDS = set((
     "a an the and or but with for from of to in on at by is are be it this that "
     "your you our we they made make using uses use plus more most best new now "
     "get gets buy buys has have will can also so very really just like into out"
 ).split())
- 
+
 TONE = {
     "friendly":     ("Say hello to {p} \U0001F44B", "A friendly little upgrade your day's been missing."),
     "bold":         ("{p}. No compromises.", "Built for people who refuse to settle."),
@@ -52,16 +52,16 @@ EXTRA_TAGS = {"instagram": ["#instagood", "#shopsmall", "#musthave"],
               "facebook": ["#smallbusiness"], "linkedin": ["#innovation", "#business"],
               "x": [], "reddit": []}
 TAG_LIMIT = {"instagram": 10, "facebook": 3, "linkedin": 5, "x": 2, "reddit": 0}
- 
- 
+
+
 def _keywords(text, limit=6):
     out = []
     for w in re.findall(r"[A-Za-z]+", text.lower()):
         if len(w) > 2 and w not in STOPWORDS and w not in out:
             out.append(w)
     return out[:limit]
- 
- 
+
+
 def _hashtags(product, description, platform):
     tags = []
     brand = "".join(w.capitalize() for w in re.findall(r"[A-Za-z]+", product)[:3])
@@ -74,8 +74,8 @@ def _hashtags(product, description, platform):
         if len(t) > 1 and t.lower() not in [x.lower() for x in seen]:
             seen.append(t)
     return seen[: TAG_LIMIT.get(platform, 8)]
- 
- 
+
+
 def _caption(product, description, platform, tone):
     hook, closer = TONE.get(tone, TONE["friendly"])
     hook = hook.format(p=product)
@@ -91,34 +91,34 @@ def _caption(product, description, platform, tone):
     elif platform == "linkedin":
         body += "\n\nWe'd love to hear what you think."
     return body
- 
- 
+
+
 def template_generate(product, description, platform, tone):
     return {
         "caption": _caption(product, description, platform, tone),
         "hashtags": _hashtags(product, description, platform),
         "post_idea": IDEAS.get(platform, IDEAS["instagram"]).format(p=product),
     }
- 
- 
+
+
 def ai_generate(product, description, platform, tone, key):
     from anthropic import Anthropic
     client = Anthropic(api_key=key)
     prompt = f"""You are an expert marketing copywriter. Write a {tone} marketing post.
- 
+
 Product: {product}
 Description: {description}
 Platform: {platform}
 Platform style: {PLATFORM_GUIDES[platform]}
- 
+
 Respond ONLY with valid JSON (no markdown, no backticks) in this exact shape:
 {{"caption": "...", "hashtags": ["#a", "#b"], "post_idea": "..."}}"""
     resp = client.messages.create(model=MODEL, max_tokens=1000,
                                   messages=[{"role": "user", "content": prompt}])
     text = "".join(b.text for b in resp.content if b.type == "text")
     return json.loads(text)
- 
- 
+
+
 def generate_post(product, description, platform, tone):
     platform = platform.lower()
     if platform not in PLATFORM_GUIDES:
@@ -134,19 +134,19 @@ def generate_post(product, description, platform, tone):
     post = template_generate(product, description, platform, tone)
     post["engine"] = "Built-in"
     return post
- 
- 
+
+
 # ----- Fetch product details from a URL (title, description, image). -----
 # Uses only the standard library. Optionally routes through a fetching service
 # (ScraperAPI-compatible) so blocked sites like Amazon/Flipkart work at scale:
 # set SCRAPER_API_KEY in your environment to turn that on.
- 
+
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
- 
+
 SCRAPER_KEY = os.environ.get("SCRAPER_API_KEY", "").strip()
- 
- 
+
+
 def _open(url, timeout=None):
     """Open a URL directly, or through the fetching service if a key is set."""
     target = url
@@ -157,8 +157,8 @@ def _open(url, timeout=None):
     req = urllib.request.Request(target, headers={
         "User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"})
     return urllib.request.urlopen(req, timeout=timeout or 15)
- 
- 
+
+
 def _meta_tags(page_html):
     """Return a dict of <meta property/name> -> content."""
     tags = {}
@@ -168,8 +168,8 @@ def _meta_tags(page_html):
         if key and val:
             tags.setdefault(key.group(1).lower(), html.unescape(val.group(1)).strip())
     return tags
- 
- 
+
+
 def _find_image_in_jsonld(data):
     """Recursively pull the first image URL out of schema.org JSON-LD data."""
     if isinstance(data, list):
@@ -195,8 +195,8 @@ def _find_image_in_jsonld(data):
             if isinstance(first, dict):
                 return first.get("url") or first.get("@id") or ""
     return ""
- 
- 
+
+
 def _jsonld_data(page_html):
     """Return all parsed JSON-LD blocks from the page."""
     out = []
@@ -208,8 +208,8 @@ def _jsonld_data(page_html):
         except Exception:
             continue
     return out
- 
- 
+
+
 def _find_field(data, field):
     """Return the first string value of `field` from JSON-LD, preferring
     schema.org Product nodes (cleaner than a page's <title>)."""
@@ -238,8 +238,8 @@ def _find_field(data, field):
                         return r
         return ""
     return walk(data, True) or walk(data, False)
- 
- 
+
+
 def _amazon_image(page_html):
     """Amazon hides the main product image in JS/data attributes, not og tags."""
     # data-a-dynamic-image='{"https://...jpg":[w,h], ...}' -> pick largest
@@ -261,8 +261,8 @@ def _amazon_image(page_html):
         if m:
             return m.group(1).replace("\\/", "/")
     return ""
- 
- 
+
+
 def parse_product(page_html, base_url):
     """Pull product name, description, and image URL out of page HTML,
     checking Open Graph tags, then embedded JSON-LD product data."""
@@ -273,7 +273,7 @@ def parse_product(page_html, base_url):
             or m.get("twitter:description") or "")
     img = (m.get("og:image") or m.get("og:image:secure_url")
            or m.get("twitter:image") or "")
- 
+
     # JSON-LD gives the cleanest product data on many stores (incl. some Amazon).
     for data in ld:
         if not title:
@@ -282,7 +282,7 @@ def parse_product(page_html, base_url):
             desc = _find_field(data, "description")
         if not img:
             img = _find_image_in_jsonld(data)
- 
+
     if not img:  # Amazon and some others hide the image in JS/data attributes
         img = _amazon_image(page_html)
     if not title:  # last resort: the page <title>
@@ -293,12 +293,12 @@ def parse_product(page_html, base_url):
                       page_html, re.I)
         if l:
             img = l.group(1)
- 
+
     if img:
         img = urllib.parse.urljoin(base_url, html.unescape(img))
     return {"product": title[:120], "description": desc[:400], "image_url": img}
- 
- 
+
+
 def _fetch_image_data(img_url):
     """Download an image and return it as a base64 data URL (so the browser
     can draw it onto a canvas without cross-origin problems). Image CDNs are
@@ -313,8 +313,8 @@ def _fetch_image_data(img_url):
         return "data:%s;base64,%s" % (ctype, base64.b64encode(data).decode("ascii"))
     except Exception:
         return ""
- 
- 
+
+
 def fetch_product(url):
     url = url.strip()
     if not re.match(r"^https?://", url, re.I):
@@ -330,20 +330,20 @@ def fetch_product(url):
                     "img_url_found": bool(img_url),
                     "img_loaded": bool(info["image"])}
     return info
- 
- 
+
+
 def _strip_html(s):
     s = re.sub(r"<[^>]+>", " ", s or "")
     return re.sub(r"\s+", " ", html.unescape(s)).strip()
- 
- 
+
+
 def _get_direct(url, cap):
     """Plain direct fetch (used for Shopify's open JSON feed — never blocked)."""
     req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=15) as r:
         return r.read(cap)
- 
- 
+
+
 def parse_shopify(data):
     """Turn a Shopify /products.json payload into our product list shape."""
     out = []
@@ -354,8 +354,8 @@ def parse_shopify(data):
                     "description": _strip_html(p.get("body_html"))[:400],
                     "image": src or ""})
     return out
- 
- 
+
+
 def _collect_products_jsonld(data, out, base):
     """Best-effort: pull Product entries out of a page's JSON-LD (non-Shopify)."""
     if isinstance(data, list):
@@ -377,8 +377,8 @@ def _collect_products_jsonld(data, out, base):
         item = el.get("item") if isinstance(el, dict) else None
         if isinstance(item, dict):
             _collect_products_jsonld(item, out, base)
- 
- 
+
+
 def fetch_products(url):
     """List a store's products. Tries Shopify's feed first, then page JSON-LD."""
     url = url.strip()
@@ -404,8 +404,8 @@ def fetch_products(url):
     except Exception:
         pass
     return {"products": [], "source": "none"}
- 
- 
+
+
 PAGE = r"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -472,7 +472,7 @@ textarea{resize:vertical}
 <div class="wrap">
  <div class="steps" id="steps"></div>
  <div class="panel">
- 
+
   <div class="step active" id="s1">
    <h2 class="title">Start with your store</h2>
    <p class="sub">Paste your store's web address and we'll pull in its products. Works best on Shopify stores. No store link? You can enter a product by hand.</p>
@@ -481,7 +481,7 @@ textarea{resize:vertical}
    <p class="note" id="findnote"></p>
    <div class="nav"><span></span><button class="btn btn-ghost" id="manualbtn">Enter a product manually instead</button></div>
   </div>
- 
+
   <div class="step" id="s2">
    <h2 class="title">Pick a product</h2>
    <p class="sub" id="s2sub">Choose the product you want to advertise.</p>
@@ -494,21 +494,21 @@ textarea{resize:vertical}
    </div>
    <div class="nav"><button class="btn btn-ghost" onclick="goto(1)">Back</button><button class="btn" id="s2next">Next</button></div>
   </div>
- 
+
   <div class="step" id="s3">
    <h2 class="title">Choose the platform</h2>
    <p class="sub">Where is this going? Pick one, or all five at once.</p>
    <div class="opts" id="platopts"></div>
    <div class="nav"><button class="btn btn-ghost" onclick="goto(2)">Back</button><button class="btn" onclick="goto(4)">Next</button></div>
   </div>
- 
+
   <div class="step" id="s4">
    <h2 class="title">Choose the idea / tone</h2>
    <p class="sub">How should it sound?</p>
    <div class="opts" id="toneopts"></div>
    <div class="nav"><button class="btn btn-ghost" onclick="goto(3)">Back</button><button class="btn" onclick="goto(5)">Next</button></div>
   </div>
- 
+
   <div class="step" id="s5">
    <h2 class="title">Choose the content type</h2>
    <p class="sub">What visual do you want with the copy?</p>
@@ -517,7 +517,7 @@ textarea{resize:vertical}
    <select id="imgsize"><option value="square">Square &mdash; 1080&times;1080 (feed)</option><option value="portrait">Portrait &mdash; 1080&times;1350 (feed, taller)</option><option value="story">Story / Reel &mdash; 1080&times;1920 (vertical)</option></select>
    <div class="nav"><button class="btn btn-ghost" onclick="goto(4)">Back</button><button class="btn" id="genbtn">Generate</button></div>
   </div>
- 
+
   <div class="step" id="s6">
    <h2 class="title">Your posts</h2>
    <p class="sub">Copy the text, download the visuals, and post to your own accounts.</p>
@@ -525,7 +525,7 @@ textarea{resize:vertical}
    <div class="nav"><button class="btn btn-ghost" onclick="goto(5)">Back</button><button class="btn btn-ghost" onclick="goto(1)">Start over</button></div>
    <p class="note">Publishing straight to Instagram &amp; Facebook is the next phase. Reddit and X get content here but aren't auto-posted.</p>
   </div>
- 
+
  </div>
 </div>
 <script>
@@ -535,7 +535,7 @@ const TONES=[["friendly","Friendly",""],["bold","Bold",""],["playful","Playful",
 const TYPES=[["image","Image","One branded graphic"],["carousel","Carousel","Multi-slide set"],["gif","GIF","Short animation"]];
 const state={product:null,image:null,platform:"all",tone:"friendly",type:"image"};
 let uploadedImg=null,cur=1;
- 
+
 function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML;}
 function renderSteps(){const el=document.getElementById("steps");el.innerHTML="";
  STEPS.forEach((s,i)=>{const n=i+1;const d=document.createElement("div");
@@ -549,7 +549,7 @@ function opt(container,items,key){const el=document.getElementById(container);el
   d.innerHTML='<div class="on">'+name+'</div>'+(desc?'<div class="od">'+desc+'</div>':'');
   d.addEventListener("click",()=>{state[key]=val;opt(container,items,key);});el.appendChild(d);});}
 opt("platopts",PLATFORMS,"platform");opt("toneopts",TONES,"tone");opt("typeopts",TYPES,"type");renderSteps();
- 
+
 document.getElementById("findbtn").addEventListener("click",findProducts);
 document.getElementById("manualbtn").addEventListener("click",()=>{
  document.getElementById("prodgrid").style.display="none";
@@ -590,7 +590,7 @@ document.getElementById("s2next").addEventListener("click",()=>{
   state.product={name,description};state.image=uploadedImg;
  }else{if(!state.product){alert("Pick a product first.");return;}}
  goto(3);});
- 
+
 document.getElementById("genbtn").addEventListener("click",generate);
 async function generate(){const btn=document.getElementById("genbtn");btn.disabled=true;btn.textContent="Generating\u2026";
  try{
@@ -600,7 +600,7 @@ async function generate(){const btn=document.getElementById("genbtn");btn.disabl
   await renderOutput(data.results);goto(6);
  }catch(e){alert("Error: "+e.message);}finally{btn.disabled=false;btn.textContent="Generate";}}
 function activeImg(){return state.image||uploadedImg||null;}
- 
+
 async function renderOutput(results){const out=document.getElementById("output");out.innerHTML="";
  for(const key of Object.keys(results)){const post=results[key];
   const box=document.createElement("div");box.className="result";
@@ -615,7 +615,7 @@ async function renderOutput(results){const out=document.getElementById("output")
   if(state.type==="image")await makeImage(post,vis);
   else if(state.type==="carousel")await makeCarousel(post,vis);
   else await makeGif(post,vis);}}
- 
+
 function imgReady(im){return new Promise(r=>{if(!im||im.complete)return r();im.onload=()=>r();im.onerror=()=>r();});}
 function imgSize(){const v=(document.getElementById("imgsize")||{}).value||"square";if(v==="portrait")return{w:1080,h:1350,tag:"portrait"};if(v==="story")return{w:1080,h:1920,tag:"story"};return{w:1080,h:1080,tag:"square"};}
 function fname(p,s){return ((p||"post").replace(/\s+/g,"-").toLowerCase())+"-"+s;}
@@ -643,13 +643,13 @@ function renderCard(o){const W=o.W,H=o.H,M=80,maxW=W-M*2;
  if(bl.length){y+=gap;x.fillStyle=o.bodyColor||o.fg;x.font=bodyFont;for(const ln of bl){x.fillText(ln,M,y);y+=bodyLH;}}
  x.fillStyle=o.muted;x.font='500 30px "Spline Sans",sans-serif';x.fillText(o.footer||"PITCHCRAFT",M,H-90);
  return c;}
- 
+
 async function makeImage(post,host){await imgReady(activeImg());const s=imgSize();const hook=(post.caption||"").split("\n")[0];
  const c=renderCard({W:s.w,H:s.h,bg:"#f4ece0",fg:"#1b1714",accent:"#e8542a",muted:"#8a7d6e",line:"#e0d4c2",kicker:"Featured",title:state.product.name||"Your product",body:hook,bodyItalic:true,bodyColor:"#e8542a",image:activeImg(),footer:"PITCHCRAFT  \u2022  "+((post.hashtags||[]).slice(0,3).join("  "))});
  const wrap=document.createElement("div");wrap.className="single";const img=document.createElement("img");img.src=c.toDataURL("image/png");
  const a=document.createElement("a");a.href=img.src;a.download=fname(state.product.name,s.tag)+".png";a.textContent="Download image";a.className="dl";
  wrap.appendChild(img);wrap.appendChild(a);host.appendChild(wrap);}
- 
+
 async function makeCarousel(post,host){await imgReady(activeImg());const s=imgSize();const imgs=activeImg()?[activeImg()]:[];
  const hook=(post.caption||"").split("\n")[0],body=(post.caption||"").split("\n").slice(1).join(" ").trim(),tags=(post.hashtags||[]).slice(0,5).join("  "),desc=state.product.description;
  const photo={bg:"#f4ece0",fg:"#1b1714",accent:"#e8542a",muted:"#8a7d6e",line:"#e0d4c2"};
@@ -663,7 +663,7 @@ async function makeCarousel(post,host){await imgReady(activeImg());const s=imgSi
   const a=document.createElement("a");a.href=im.src;a.download=fname(state.product.name,s.tag+"-slide-"+(i+1))+".png";a.textContent="Save "+(i+1);a.className="dl";
   b.appendChild(im);b.appendChild(a);strip.appendChild(b);});
  host.appendChild(strip);}
- 
+
 async function makeGif(post,host){
  if(typeof GIF==="undefined"){host.innerHTML='<p class="note error">GIF tool didn\'t load \u2014 check your connection and try again.</p>';return;}
  await imgReady(activeImg());const s=imgSize();const scale=Math.min(1,720/Math.max(s.w,s.h));const W=Math.round(s.w*scale),H=Math.round(s.h*scale);
@@ -676,13 +676,13 @@ async function makeGif(post,host){
  gif.render();}
 </script>
 </body></html>"""
- 
- 
+
+
 @app.route("/")
 def home():
     return render_template_string(PAGE)
- 
- 
+
+
 @app.route("/api/generate", methods=["POST"])
 def api_generate():
     data = request.get_json(silent=True) or {}
@@ -695,8 +695,8 @@ def api_generate():
     platforms = list(PLATFORM_GUIDES) if platform == "all" else [platform]
     results = {p: generate_post(product, description, p, tone) for p in platforms}
     return jsonify({"results": results})
- 
- 
+
+
 @app.route("/api/fetch", methods=["POST"])
 def api_fetch():
     data = request.get_json(silent=True) or {}
@@ -709,8 +709,8 @@ def api_fetch():
         return jsonify({"error": "Couldn't read that page — the site may block "
                         "automated access (Amazon often does). Fill the fields in "
                         "manually, or try a different product link."}), 200
- 
- 
+
+
 @app.route("/api/products", methods=["POST"])
 def api_products():
     data = request.get_json(silent=True) or {}
@@ -727,15 +727,14 @@ def api_products():
                         "best on Shopify stores). Enter the product manually, or "
                         "paste a single product link.", "products": []}), 200
     return jsonify(res)
- 
- 
+
+
 @app.route("/api/image", methods=["POST"])
 def api_image():
     data = request.get_json(silent=True) or {}
     u = (data.get("url") or "").strip()
     return jsonify({"image": _fetch_image_data(u) if u else ""})
- 
- 
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
- 
